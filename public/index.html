@@ -19,7 +19,21 @@
     fitAddon.fit();
     const ws = new WebSocket(`ws://${location.host}?token=${token}`);
 
-    ws.onmessage = e => term.write(e.data);
+    ws.onmessage =async(e) => {
+      let data = e.data;
+
+  // 如果收到的是 Blob，将其转换为文本
+  if (data instanceof Blob) {
+    data = await data.text();
+  } 
+  // 如果收到的是 ArrayBuffer (部分浏览器配置下)
+  else if (data instanceof ArrayBuffer) {
+    data = new TextDecoder().decode(data);
+  }
+
+  // console.log("收到数据:", data);
+  term.write(data);
+    }
 
     term.onData(data => ws.send(data));
   </script>

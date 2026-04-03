@@ -13,12 +13,12 @@ const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
 // 定义允许的命令前缀，确保安全
-const ALLOWED_COMMANDS = ["ansible", "ansible-playbook", "ansible-inventory", "ls"];
+const ALLOWED_COMMANDS = ["ansible", "ansible-playbook", "ansible-inventory", "ls","nu"];
 
 const buffers = new Map();
 
 wss.on("connection", (ws) => {
-  console.log("客户端已连接");
+  // console.log("客户端已连接");
   // 初始化当前连接的缓冲区
   buffers.set(ws, "");
 
@@ -26,55 +26,64 @@ wss.on("connection", (ws) => {
     const data = message.toString();
     let currentBuffer = buffers.get(ws);
 
-    // 1. 处理回车键 (CR: \r)
-    if (data === "\r" || data === "\n") {
-      ws.send("\r\n"); // 换行
-      const fullCommand = currentBuffer.trim();
-      buffers.set(ws, ""); // 清空缓冲区以备下次输入
+   if (data === "\r" || data === "\n") {
+    ws.send("\r\n");
+    const fullCommand = currentBuffer.trim();
+    buffers.set(ws, "");
 
-      if (fullCommand.length === 0) {
+    if (!fullCommand) {
         ws.send("$ ");
         return;
-      }
+    }
 
-      // 解析命令和参数
-      const args = fullCommand.split(/\s+/);
-      const cmd = args[0];
-      // console.log(cmd)
-      // 2. 权限校验
-      if (!ALLOWED_COMMANDS.includes(cmd)) {
+    // --- 关键点 1: 正确拆分参数 ---
+    // 输入 "ls -l /" 会变成 ["ls", "-l", "/"]
+    const args = fullCommand.split(/\s+/).filter(arg => arg.length > 0);
+    const cmd = args[0];
+
+    if (!ALLOWED_COMMANDS.includes(cmd)) {
         ws.send(`\x1b[31m❌ 禁止执行命令: ${cmd}\x1b[0m\r\n$ `);
         return;
-      }
+    }
 
-      try {
-        ws.send(`\x1b[32m执行中: ${fullCommand}\x1b[0m\r\n`);
+    try {
+        // console.log(`[Debug] 正在执行数组:`, args);
 
-        const proc = Bun.spawn(args, { // 此时 args 是完整的数组
-          stdout: "pipe",
-          stderr: "pipe",
+        const proc = Bun.spawn(args, {
+            stdout: "pipe",
+            stderr: "pipe",
+            env: process.env, // 确保环境变量传递
         });
 
-        const streamOutput = async (reader) => {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            ws.send(value);
-          }
-        };
+        // --- 关键点 2: 使用更可靠的获取方式 ---
+        // 直接等待输出完成
+        const stdoutData = await new Response(proc.stdout).arrayBuffer();
+        const stderrData = await new Response(proc.stderr).arrayBuffer();
 
-        await Promise.all([
-          streamOutput(proc.stdout.getReader()),
-          streamOutput(proc.stderr.getReader())
-        ]);
+        // 将结果转为 Uint8Array 发送给 xterm.js
+        if (stdoutData.byteLength > 0) {
+            ws.send(new Uint8Array(stdoutData));
+        }
+        
+        if (stderrData.byteLength > 0) {
+            ws.send(new Uint8Array(stderrData));
+        }
 
         const exitCode = await proc.exited;
-        ws.send(`\r\n\x1b[33m进程已结束，退出码: ${exitCode}\x1b[0m\r\n$ `);
-      } catch (e) {
+        
+        // 如果 exitCode 是 0 但还是没输出，给个提示排查
+        if (stdoutData.byteLength === 0 && stderrData.byteLength === 0) {
+            ws.send(`\x1b[31m(命令已执行，但未捕获到任何输出内容)\x1b[0m\r\n`);
+        }
+
+        ws.send(`\r\n$ `);
+
+    } catch (e) {
+        console.error("执行出错:", e);
         ws.send(`\r\n\x1b[31m系统错误: ${e.message}\x1b[0m\r\n$ `);
-      }
-      return;
     }
+    return;
+}
 
     // 2. 处理退格键 (Backspace: \x7f)
     if (data === "\x7f") {
