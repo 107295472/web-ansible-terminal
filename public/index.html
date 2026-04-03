@@ -12,7 +12,9 @@
        const token = localStorage.getItem("token");
     if (!token) location.href = "/login.html";
 
-    const term = new Terminal();
+   const term = new Terminal({
+  convertEol: true, // 启用此项：将 \n 转换为 \r\n
+});
     const fitAddon = new FitAddon.FitAddon(); 
     term.loadAddon(fitAddon); 
     term.open(document.getElementById('terminal')); 

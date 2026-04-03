@@ -27,59 +27,50 @@ wss.on("connection", (ws) => {
     let currentBuffer = buffers.get(ws);
 
    if (data === "\r" || data === "\n") {
+    // 1. 先换行回显
     ws.send("\r\n");
+    
     const fullCommand = currentBuffer.trim();
-    buffers.set(ws, "");
+    buffers.set(ws, ""); // 立即清空，防止重复触发
 
     if (!fullCommand) {
         ws.send("$ ");
         return;
     }
 
-    // --- 关键点 1: 正确拆分参数 ---
-    // 输入 "ls -l /" 会变成 ["ls", "-l", "/"]
     const args = fullCommand.split(/\s+/).filter(arg => arg.length > 0);
-    const cmd = args[0];
-
-    if (!ALLOWED_COMMANDS.includes(cmd)) {
-        ws.send(`\x1b[31m❌ 禁止执行命令: ${cmd}\x1b[0m\r\n$ `);
-        return;
-    }
-
+    
     try {
-        // console.log(`[Debug] 正在执行数组:`, args);
-
         const proc = Bun.spawn(args, {
             stdout: "pipe",
             stderr: "pipe",
-            env: process.env, // 确保环境变量传递
+            env: process.env
         });
 
-        // --- 关键点 2: 使用更可靠的获取方式 ---
-        // 直接等待输出完成
-        const stdoutData = await new Response(proc.stdout).arrayBuffer();
-        const stderrData = await new Response(proc.stderr).arrayBuffer();
+        // 2. 获取输出（确保使用 await 等待读取完成）
+        const [stdoutData, stderrData] = await Promise.all([
+            new Response(proc.stdout).arrayBuffer(),
+            new Response(proc.stderr).arrayBuffer()
+        ]);
 
-        // 将结果转为 Uint8Array 发送给 xterm.js
+        const decoder = new TextDecoder();
+
+        // 3. 发送输出内容
         if (stdoutData.byteLength > 0) {
-            ws.send(new Uint8Array(stdoutData));
+            ws.send(decoder.decode(stdoutData));
         }
-        
         if (stderrData.byteLength > 0) {
-            ws.send(new Uint8Array(stderrData));
+            ws.send(decoder.decode(stderrData));
         }
 
-        const exitCode = await proc.exited;
-        
-        // 如果 exitCode 是 0 但还是没输出，给个提示排查
-        if (stdoutData.byteLength === 0 && stderrData.byteLength === 0) {
-            ws.send(`\x1b[31m(命令已执行，但未捕获到任何输出内容)\x1b[0m\r\n`);
-        }
+        // 4. 等待进程彻底退出
+        await proc.exited;
 
-        ws.send(`\r\n$ `);
+        // 5. 【重要】在所有数据发送完毕后，额外加一个换行再给提示符
+        // 这样可以确保提示符永远在新的一行开头
+        ws.send("\r\n$ ");
 
     } catch (e) {
-        console.error("执行出错:", e);
         ws.send(`\r\n\x1b[31m系统错误: ${e.message}\x1b[0m\r\n$ `);
     }
     return;
