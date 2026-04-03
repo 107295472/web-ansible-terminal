@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <link rel="stylesheet" href="xterm/xterm.css" />
+  <script src="xterm/xterm.js"></script>
+</head>
+<body style="background: #000; margin: 0;">
+  <div id="terminal" style="height: 100vh;"></div>
+
+  <script>
+    const term = new Terminal({
+      cursorBlink: true,
+      theme: { background: '#1e1e1e' },
+      rows: 40
+    });
+    term.open(document.getElementById('terminal'));
+
+    const ws = new WebSocket(`ws://${window.location.host}`);
+    
+    let inputBuffer = "";
+
+    // 接收后端数据直接写入终端
+    ws.onmessage = async (ev) => {
+      if (ev.data instanceof Blob) {
+        term.write(new Uint8Array(await ev.data.arrayBuffer()));
+      } else {
+        term.write(ev.data);
+      }
+    };
+
+    // 简易的输入处理
+    term.onData(data => {
+      if (data === '\r') { // 回车发送命令
+        ws.send(inputBuffer);
+        inputBuffer = "";
+      } else if (data === '\u007f') { // 退格
+        if (inputBuffer.length > 0) {
+          inputBuffer = inputBuffer.slice(0, -1);
+          term.write('\b \b');
+        }
+      } else {
+        inputBuffer += data;
+        term.write(data); // 本地回显
+      }
+    });
+  </script>
+</body>
+</html>

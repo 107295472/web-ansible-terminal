@@ -1,0 +1,18 @@
+build/bin
+node_modules
+fapp/dist
+fapp/node_modules
+prdata
+# Local
+.DS_Store
+*.local
+*.log*
+logs
+*.log
+
+# IDE
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.exe
+*.zip

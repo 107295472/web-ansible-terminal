@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<body>
+  <h2>登录</h2>
+  <input id="user" placeholder="用户名"><br>
+  <input id="pass" placeholder="密码" type="password"><br>
+  <button onclick="login()">登录</button>
+
+  <script>
+    async function login() {
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: document.getElementById("user").value,
+          password: document.getElementById("pass").value
+        })
+      });
+
+      const data = await res.json();
+      if (data.token) {
+        localStorage.setItem("token", data.token);
+        location.href = "/index.html";
+      } else {
+        alert("登录失败");
+      }
+    }
+  </script>
+</body>
+</html>
