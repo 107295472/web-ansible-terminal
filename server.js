@@ -12,7 +12,13 @@ app.use(express.static(path.join(import.meta.dir, "public")));
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
-const ALLOWED_COMMANDS = ["ansible", "ansible-playbook", "ansible-inventory", "ls", "nu"];
+const ALLOWED_COMMANDS = [
+  "ansible",
+  "ansible-playbook",
+  "ansible-inventory",
+  "ls",
+  "nu",
+];
 const buffers = new Map();
 
 wss.on("connection", (ws) => {
@@ -34,7 +40,7 @@ wss.on("connection", (ws) => {
       }
 
       // 拆分命令和参数，例如 "ls -la" -> ["ls", "-la"]
-      const args = fullCommand.split(/\s+/).filter(arg => arg.length > 0);
+      const args = fullCommand.split(/\s+/).filter((arg) => arg.length > 0);
       const cmd = args[0];
 
       // 【核心过滤逻辑】
@@ -44,36 +50,32 @@ wss.on("connection", (ws) => {
       }
 
       try {
-        // 告知用户正在执行
         ws.send(`\x1b[32m[Exec]: ${fullCommand}\x1b[0m\r\n`);
 
         const proc = Bun.spawn(args, {
           stdout: "pipe",
           stderr: "pipe",
-          env: process.env,
         });
 
-        // 读取输出数据 (使用 Response 确保即使进程瞬间结束也能抓到数据)
-        const [stdoutData, stderrData] = await Promise.all([
-          new Response(proc.stdout).arrayBuffer(),
-          new Response(proc.stderr).arrayBuffer()
-        ]);
+        // 定义一个异步函数来处理流，不阻塞主流程
+        const streamToWs = async (stream) => {
+          const reader = stream.getReader();
+          const decoder = new TextDecoder();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            // 只要有数据，立刻发送到 WebSocket
+            ws.send(decoder.decode(value));
+          }
+        };
 
-        const decoder = new TextDecoder();
+        // 同时启动 stdout 和 stderr 的读取，但不使用 Promise.all 阻塞
+        streamToWs(proc.stdout);
+        streamToWs(proc.stderr);
 
-        // 发送结果给前端
-        if (stdoutData.byteLength > 0) {
-          ws.send(decoder.decode(stdoutData));
-        }
-        if (stderrData.byteLength > 0) {
-          ws.send(decoder.decode(stderrData));
-        }
-
-        const exitCode = await proc.exited;
-        
-        // 执行完后换行打印提示符
+        // 等待进程退出以发送提示符
+        await proc.exited;
         ws.send(`\r\n$ `);
-
       } catch (e) {
         ws.send(`\r\n\x1b[31m执行失败: ${e.message}\x1b[0m\r\n$ `);
       }
@@ -93,9 +95,8 @@ wss.on("connection", (ws) => {
     // --- 3. 普通输入：存入缓冲区并回显 ---
     currentBuffer += data;
     buffers.set(ws, currentBuffer);
-    ws.send(data); 
+    ws.send(data);
   });
-
 
   ws.on("close", () => {
     buffers.delete(ws);
